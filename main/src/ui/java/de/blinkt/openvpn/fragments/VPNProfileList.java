@@ -500,7 +500,7 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
                         // Save profile
                         ProfileManager pm = getPM();
                         pm.addProfile(np);
-                        ProfileManager.saveProfileList(requireActivity());
+                        getPM().saveProfileList(requireActivity());
                         ProfileManager.saveProfile(requireActivity(), np);
                         requireActivity().runOnUiThread(() -> startVPN(np));
                     }

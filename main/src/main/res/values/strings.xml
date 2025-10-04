@@ -202,6 +202,7 @@
     <string name="bubble_open_app">Open App</string>
     <string name="bubble_disconnect">Disconnect</string>
     <string name="bubble_quit">Quit</string>
+    <string name="users_connected">%d users connected</string>
     <string name="importpkcs12fromconfig">Import PKCS12 from configuration into Android Keystore</string>
     <string name="getproxy_error">Error getting proxy settings: %s</string>
     <string name="using_proxy">Using proxy %1$s %2$s</string>
