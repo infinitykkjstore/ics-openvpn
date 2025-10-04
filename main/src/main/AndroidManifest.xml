@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Needed for drawing overlay bubble (granted at runtime via Settings) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Used to show all apps in the allowed Apps selection,
          this app needs the list the app in the allow/deny apps over the VPN -->
@@ -64,6 +66,11 @@
             android:name=".core.OpenVPNStatusService"
             android:exported="false"
             android:process=":openvpn" />
+
+        <service
+            android:name=".activities.BubbleService"
+            android:exported="false"
+            android:permission="android.permission.SYSTEM_ALERT_WINDOW" />
 
         <activity android:name=".api.GrantPermissionsActivity"
                 android:exported="true">

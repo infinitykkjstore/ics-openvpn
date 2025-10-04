@@ -51,6 +51,14 @@ class MainActivity : BaseActivity() {
 
         setUpEdgeEdgeInsetsListener(view, R.id.root_linear_layout)
         setContentView(view)
+
+        // Start floating bubble service if overlay permission is granted, otherwise request it
+        if (BubbleService.canDrawOverlays(this)) {
+            val svc = Intent(this, BubbleService::class.java)
+            startService(svc)
+        } else {
+            BubbleService.requestPermission(this)
+        }
     }
 
 
