@@ -45,11 +45,20 @@ import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.TreeSet;
+import java.util.Iterator;
+import de.blinkt.openvpn.core.ConfigParser;
+import org.json.JSONObject;
+import org.json.JSONException;
 
 import de.blinkt.openvpn.LaunchVPN;
 import de.blinkt.openvpn.R;
@@ -87,7 +96,8 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
     private static final String PREF_SORT_BY_LRU = "sortProfilesByLRU";
     protected VpnProfile mEditProfile = null;
     private String mLastStatusMessage;
-    private ArrayAdapter<VpnProfile> mArrayadapter;
+    private ArrayAdapter mArrayadapter;
+    private boolean useRemoteProfiles = true;
     private Intent mLastIntent;
     private VpnProfile defaultVPN;
     private View mPermissionView;
@@ -285,13 +295,13 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
         newvpntext.setText(Html.fromHtml(getString(R.string.add_new_vpn_hint), new MiniImageGetter(), null));
         importvpntext.setText(Html.fromHtml(getString(R.string.vpn_import_hint), new MiniImageGetter(), null));
 
+        // Remove FABs for add/import in remote mode
         ImageButton fab_add = (ImageButton) v.findViewById(R.id.fab_add);
         ImageButton fab_import = (ImageButton) v.findViewById(R.id.fab_import);
         if (fab_add != null)
-            fab_add.setOnClickListener(this);
-
+            fab_add.setVisibility(View.GONE);
         if (fab_import != null)
-            fab_import.setOnClickListener(this);
+            fab_import.setVisibility(View.GONE);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             checkForNotificationPermission(v);
@@ -313,55 +323,211 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
 
     private void setListAdapter() {
         if (mArrayadapter == null) {
-            mArrayadapter = new VPNArrayAdapter(getActivity(), R.layout.vpn_list_item, R.id.vpn_item_title);
-
+            if (useRemoteProfiles) {
+                mArrayadapter = new RemoteServerAdapter(getActivity(), R.layout.vpn_list_item, R.id.vpn_item_title);
+            } else {
+                mArrayadapter = new VPNArrayAdapter(getActivity(), R.layout.vpn_list_item, R.id.vpn_item_title);
+            }
         }
         populateVpnList();
     }
 
     private void populateVpnList() {
-        boolean sortByLRU = Preferences.getDefaultSharedPreferences(requireActivity()).getBoolean(PREF_SORT_BY_LRU, false);
-        getPM().refreshVPNList(requireContext());
-        Collection<VpnProfile> allvpn = getPM().getProfiles();
-        TreeSet<VpnProfile> sortedset;
-        if (sortByLRU)
-            sortedset = new TreeSet<>(new VpnProfileLRUComparator());
-        else
-            sortedset = new TreeSet<>(new VpnProfileNameComparator());
+        if (useRemoteProfiles) {
+            // fetch list from remote JSON
+            fetchPeersJson();
+        } else {
+            boolean sortByLRU = Preferences.getDefaultSharedPreferences(requireActivity()).getBoolean(PREF_SORT_BY_LRU, false);
+            getPM().refreshVPNList(requireContext());
+            Collection<VpnProfile> allvpn = getPM().getProfiles();
+            TreeSet<VpnProfile> sortedset;
+            if (sortByLRU)
+                sortedset = new TreeSet<>(new VpnProfileLRUComparator());
+            else
+                sortedset = new TreeSet<>(new VpnProfileNameComparator());
 
-        sortedset.addAll(allvpn);
-        mArrayadapter.clear();
-        mArrayadapter.addAll(sortedset);
+            sortedset.addAll(allvpn);
+            mArrayadapter.clear();
+            mArrayadapter.addAll(sortedset);
 
-        setListAdapter(mArrayadapter);
-        mArrayadapter.notifyDataSetChanged();
+            setListAdapter(mArrayadapter);
+            mArrayadapter.notifyDataSetChanged();
+        }
+    }
+
+    // Remote server model
+    static class RemoteServer {
+        String country;
+        String id;
+        String location;
+        String ovpn_url;
+        int users = 0;
+
+        RemoteServer(String country, String id, String location, String ovpn_url, int users) {
+            this.country = country;
+            this.id = id;
+            this.location = location;
+            this.ovpn_url = ovpn_url;
+            this.users = users;
+        }
+
+        @Override
+        public String toString() {
+            return country + " - " + location;
+        }
+    }
+
+    private void fetchPeersJson() {
+        final String url = "http://infinitykkj.shop/testevpn/database/peers.json";
+        new Thread(() -> {
+            try {
+                URL u = new URL(url);
+                HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setRequestMethod("GET");
+                conn.connect();
+
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    conn.disconnect();
+                    return;
+                }
+
+                InputStream is = conn.getInputStream();
+                BufferedReader br = new BufferedReader(new InputStreamReader(is));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) {
+                    sb.append(line);
+                }
+                br.close();
+                conn.disconnect();
+
+                final List<RemoteServer> servers = new LinkedList<>();
+                try {
+                    JSONObject root = new JSONObject(sb.toString());
+                    for (Iterator<String> it = root.keys(); it.hasNext(); ) {
+                        String country = it.next();
+                        JSONObject countryObj = root.getJSONObject(country);
+                        for (Iterator<String> sit = countryObj.keys(); sit.hasNext(); ) {
+                            String id = sit.next();
+                            JSONObject srv = countryObj.getJSONObject(id);
+                            String location = srv.optString("location", country + " " + id);
+                            String ovpn = srv.optString("ovpn_url", "");
+                            int users = 0;
+                            JSONObject usersObj = srv.optJSONObject("users_logged_in");
+                            if (usersObj != null) users = usersObj.length();
+                            servers.add(new RemoteServer(country, id, location, ovpn, users));
+                        }
+                    }
+                } catch (JSONException je) {
+                    // parse error
+                }
+
+                requireActivity().runOnUiThread(() -> {
+                    mArrayadapter.clear();
+                    mArrayadapter.addAll(servers);
+                    setListAdapter(mArrayadapter);
+                    mArrayadapter.notifyDataSetChanged();
+                });
+
+            } catch (Exception e) {
+                // ignore for now
+            }
+        }).start();
+    }
+
+    // Adapter to show remote servers
+    private class RemoteServerAdapter extends ArrayAdapter<RemoteServer> {
+        public RemoteServerAdapter(Context context, int resource, int textViewResourceId) {
+            super(context, resource, textViewResourceId);
+        }
+
+        @NonNull
+        @Override
+        public View getView(final int position, View convertView, @NonNull ViewGroup parent) {
+            View v = super.getView(position, convertView, parent);
+            final RemoteServer server = (RemoteServer) getItem(position);
+
+            View titleview = v.findViewById(R.id.vpn_list_item_left);
+            titleview.setOnClickListener(v1 -> onRemoteServerClick(server));
+
+            View settingsview = v.findViewById(R.id.quickedit_settings);
+            // hide settings for remote
+            settingsview.setVisibility(View.GONE);
+
+            TextView title = v.findViewById(R.id.vpn_item_title);
+            title.setText(server.toString());
+
+            TextView subtitle = v.findViewById(R.id.vpn_item_subtitle);
+            subtitle.setText(server.users > 0 ? getString(R.string.users_connected, server.users) : "");
+            if (subtitle.getText().length() > 0) subtitle.setVisibility(View.VISIBLE); else subtitle.setVisibility(View.GONE);
+
+            return v;
+        }
+    }
+
+    private void onRemoteServerClick(RemoteServer server) {
+        // download ovpn file and create profile
+        new Thread(() -> {
+            try {
+                URL u = new URL(server.ovpn_url);
+                HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setRequestMethod("GET");
+                conn.connect();
+                if (conn.getResponseCode() != 200) {
+                    conn.disconnect();
+                    return;
+                }
+                BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line).append("\n");
+                br.close();
+                conn.disconnect();
+
+                final String ovpnText = sb.toString();
+                // Parse with ConfigParser and convert to VpnProfile
+                try {
+                    ConfigParser cp = new ConfigParser();
+                    cp.parseConfig(new java.io.StringReader(ovpnText));
+                    VpnProfile np = cp.convertProfile();
+                    if (np != null) {
+                        np.mName = server.toString();
+                        // Save profile
+                        ProfileManager pm = getPM();
+                        pm.addProfile(np);
+                        ProfileManager.saveProfileList(requireActivity());
+                        ProfileManager.saveProfile(requireActivity(), np);
+                        requireActivity().runOnUiThread(() -> startVPN(np));
+                    }
+                } catch (Exception e) {
+                    // parsing error
+                }
+
+            } catch (Exception e) {
+                // ignore
+            }
+        }).start();
     }
 
     @Override
     public void onCreateOptionsMenu(Menu menu, @NonNull MenuInflater inflater) {
-        menu.add(0, MENU_ADD_PROFILE, 0, R.string.menu_add_profile)
-                .setIcon(R.drawable.ic_menu_add)
-                .setAlphabeticShortcut('a')
-                .setTitleCondensed(getActivity().getString(R.string.add))
-                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+    // Removed Add and Import menu items when using remote profiles
+    menu.add(0, MENU_CHANGE_SORTING, 0, R.string.change_sorting)
+        .setIcon(R.drawable.ic_sort)
+        .setAlphabeticShortcut('s')
+        .setTitleCondensed(getString(R.string.sort))
+        .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
 
-        menu.add(0, MENU_IMPORT_PROFILE, 0, R.string.menu_import)
-                .setIcon(R.drawable.ic_menu_import)
-                .setAlphabeticShortcut('i')
-                .setTitleCondensed(getActivity().getString(R.string.menu_import_short))
-                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
-
-        menu.add(0, MENU_CHANGE_SORTING, 0, R.string.change_sorting)
-                .setIcon(R.drawable.ic_sort)
-                .setAlphabeticShortcut('s')
-                .setTitleCondensed(getString(R.string.sort))
-                .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-
-        menu.add(0, MENU_IMPORT_AS, 0, R.string.import_from_as)
-                .setIcon(R.drawable.ic_menu_import)
-                .setAlphabeticShortcut('p')
-                .setTitleCondensed("Import AS")
-                .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+    menu.add(0, MENU_IMPORT_AS, 0, R.string.import_from_as)
+        .setIcon(R.drawable.ic_menu_import)
+        .setAlphabeticShortcut('p')
+        .setTitleCondensed("Import AS")
+        .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
 
     }
 
