@@ -390,7 +390,9 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
 
                 int code = conn.getResponseCode();
                 if (code != 200) {
+                    VpnStatus.logError("Fetching peers.json failed: HTTP " + code);
                     conn.disconnect();
+                    requireActivity().runOnUiThread(() -> Toast.makeText(getActivity(), R.string.error_importing_file, Toast.LENGTH_SHORT).show());
                     return;
                 }
 
@@ -406,7 +408,9 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
 
                 final List<RemoteServer> servers = new LinkedList<>();
                 try {
-                    JSONObject root = new JSONObject(sb.toString());
+                    String rawJson = sb.toString();
+                    VpnStatus.logDebug("Fetched peers.json: " + (rawJson.length() > 2000 ? rawJson.substring(0, 2000) + "..." : rawJson));
+                    JSONObject root = new JSONObject(rawJson);
                     for (Iterator<String> it = root.keys(); it.hasNext(); ) {
                         String country = it.next();
                         JSONObject countryObj = root.getJSONObject(country);
@@ -422,7 +426,10 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
                         }
                     }
                 } catch (JSONException je) {
-                    // parse error
+                    VpnStatus.logError("Error parsing peers.json: " + je.getMessage());
+                    requireActivity().runOnUiThread(() -> Toast.makeText(getActivity(), getString(R.string.server_list_fetch_error), Toast.LENGTH_LONG).show());
+                    // Still return so UI won't be updated with an empty list
+                    return;
                 }
 
                 requireActivity().runOnUiThread(() -> {
@@ -430,10 +437,13 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
                     mArrayadapter.addAll(servers);
                     setListAdapter(mArrayadapter);
                     mArrayadapter.notifyDataSetChanged();
+                    VpnStatus.logInfo("Populated server list with " + servers.size() + " entries");
+                    Toast.makeText(getActivity(), String.format(getString(R.string.server_list_loaded), servers.size()), Toast.LENGTH_SHORT).show();
                 });
 
             } catch (Exception e) {
-                // ignore for now
+                VpnStatus.logException(e);
+                requireActivity().runOnUiThread(() -> Toast.makeText(getActivity(), getString(R.string.server_list_fetch_error), Toast.LENGTH_LONG).show());
             }
         }).start();
     }
@@ -490,6 +500,12 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
                 conn.disconnect();
 
                 final String ovpnText = sb.toString();
+                // Log raw ovpn for debugging (trim if too long)
+                String trimmed = ovpnText.length() > 4000 ? ovpnText.substring(0, 4000) + "\n...trimmed..." : ovpnText;
+                VpnStatus.logDebug("Downloaded .ovpn for " + server.toString() + ":\n" + (trimmed.length() > 2000 ? trimmed.substring(0,2000)+"..." : trimmed));
+                // Also add raw ovpn to the OpenVPN log view for deeper debugging
+                VpnStatus.logMessage(VpnStatus.LogLevel.DEBUG, "REMOTE_OVPN:", trimmed);
+
                 // Parse with ConfigParser and convert to VpnProfile
                 try {
                     ConfigParser cp = new ConfigParser();
@@ -502,10 +518,18 @@ public class VPNProfileList extends ListFragment implements OnClickListener, Vpn
                         pm.addProfile(np);
                         getPM().saveProfileList(requireActivity());
                         ProfileManager.saveProfile(requireActivity(), np);
-                        requireActivity().runOnUiThread(() -> startVPN(np));
+                        VpnStatus.logInfo("Imported profile " + np.mName);
+                        requireActivity().runOnUiThread(() -> {
+                            Toast.makeText(getActivity(), "Profile imported: " + np.mName, Toast.LENGTH_SHORT).show();
+                            startVPN(np);
+                        });
+                    } else {
+                        VpnStatus.logError("ConfigParser returned null profile for server: " + server.toString());
+                        requireActivity().runOnUiThread(() -> Toast.makeText(getActivity(), getString(R.string.import_config_error), Toast.LENGTH_LONG).show());
                     }
                 } catch (Exception e) {
-                    // parsing error
+                    VpnStatus.logException(e);
+                    requireActivity().runOnUiThread(() -> Toast.makeText(getActivity(), getString(R.string.import_config_error) + ": " + e.getMessage(), Toast.LENGTH_LONG).show());
                 }
 
             } catch (Exception e) {

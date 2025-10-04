@@ -203,6 +203,9 @@
     <string name="bubble_disconnect">Disconnect</string>
     <string name="bubble_quit">Quit</string>
     <string name="users_connected">%d users connected</string>
+    <string name="server_list_loaded">Server list loaded (%d)</string>
+    <string name="server_list_fetch_error">Failed to fetch server list</string>
+    <string name="profile_imported">Profile imported: %s</string>
     <string name="importpkcs12fromconfig">Import PKCS12 from configuration into Android Keystore</string>
     <string name="getproxy_error">Error getting proxy settings: %s</string>
     <string name="using_proxy">Using proxy %1$s %2$s</string>
